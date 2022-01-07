@@ -1,13 +1,12 @@
 #include <Arduino.h>
 #include <Adafruit_MLX90640.h>
+#include <ESP8266WebServer.h>
 #include <ArduinoJson.h>
-#include <WiFi.h>
-#include <WebServer.h>
-#include <ESPmDNS.h>
-#include <WiFiUdp.h>
-#include <ArduinoOTA.h>
+#include <Wire.h>
+#include <WiFiManager.h>
+#include <ESP8266WiFi.h>
 
-WebServer server(80);
+ESP8266WebServer server(80);
 
 Adafruit_MLX90640 mlx;
 
@@ -16,8 +15,8 @@ unsigned long previousFrameTime = 0;
 
 const float humanThreshold = 3.5;
 
-const int rows = 24;
-const int cols = 32;
+const int rows = 16;
+const int cols = 12;
 const int total_pixels = rows * cols;
 float pixels[total_pixels];
 float frame[rows][cols];
@@ -247,8 +246,8 @@ void setup()
   }
 
   WiFi.mode(WIFI_STA);
-
-  WiFi.begin("<WiFi SSID>", "<WiFi Password>");
+  WiFi.hostname("d1_mini_thermal_camera");
+  WiFi.begin("T-6Gp2SY", "5ak7b4x7grn2");
 
   while (WiFi.status() != WL_CONNECTED)
   {
@@ -259,38 +258,6 @@ void setup()
   Serial.println("WiFi connected!");
   Serial.print("Got IP: ");
   Serial.println(WiFi.localIP());
-
-  ArduinoOTA
-      .onStart([]()
-               {
-                 String type;
-                 if (ArduinoOTA.getCommand() == U_FLASH)
-                   type = "sketch";
-                 else // U_SPIFFS
-                   type = "filesystem";
-
-                 Serial.println("Start updating " + type);
-               })
-      .onEnd([]()
-             { Serial.println("\nEnd"); })
-      .onProgress([](unsigned int progress, unsigned int total)
-                  { Serial.printf("Progress: %u%%\r", (progress / (total / 100))); })
-      .onError([](ota_error_t error)
-               {
-                 Serial.printf("Error[%u]: ", error);
-                 if (error == OTA_AUTH_ERROR)
-                   Serial.println("Auth Failed");
-                 else if (error == OTA_BEGIN_ERROR)
-                   Serial.println("Begin Failed");
-                 else if (error == OTA_CONNECT_ERROR)
-                   Serial.println("Connect Failed");
-                 else if (error == OTA_RECEIVE_ERROR)
-                   Serial.println("Receive Failed");
-                 else if (error == OTA_END_ERROR)
-                   Serial.println("End Failed");
-               });
-
-  ArduinoOTA.begin();
 
   server.on("/raw", sendRaw);
 
@@ -311,5 +278,4 @@ void loop()
     previousFrameTime = currentTime;
   }
   server.handleClient();
-  ArduinoOTA.handle();
 }
