@@ -26,7 +26,7 @@ const byte MLX90641_address = 0x33; //Default 7-bit unshifted address of the MLX
 #define TA_SHIFT 8                  //Default shift for MLX90641 in open air
 
 uint16_t eeMLX90641[832];
-float MLX90641To[192];
+float MLX90641To[total_pixels];
 uint16_t MLX90641Frame[242];
 paramsMLX90641 MLX90641;
 int errorno = 0;
@@ -39,7 +39,7 @@ String output;
 
 float getPixel(int x, int y)
 {
-    if (x <= rows && x > 0 && y <= cols && y > 0)
+    if (x < rows && x >= 0 && y < cols && y >= 0)
     {
         return frame[x][y];
     }
@@ -79,32 +79,29 @@ void getRaw()
     unsigned char local_min_index = 0;
     unsigned char local_max_index = 0;
 
-    Serial.println("Thermal camera grid:");
+    Serial.println("Starting frame construction");
     for (int i = 0; i < total_pixels; i++)
     {
         float cameraIndexVal = MLX90641To[i];
         frame[row][col] = cameraIndexVal;
 
-        Serial.print(cameraIndexVal);
-        Serial.print(" , ");
+        // Serial.print(cameraIndexVal);
+        // Serial.print(" , ");
 
-        if (col + 1 == cols)
+        if (row + 1 == rows)
         {
-            col = 0;
-            row++;
-            Serial.println("");
+            row = 0;
+            col++;
+            // Serial.println("");
         }
         else
         {
-            col++;
+            row++;
         }
     }
-    Serial.println("");
-    Serial.println("");
 
-    avg = avg / total_pixels;
+    Serial.println("Frame construction finished. Continuing with payload and person detection");
 
-    // person detection + payload construction
     for (int r = 0; r < rows; r++)
     {
         for (int c = 0; c < cols; c++)
@@ -132,6 +129,7 @@ void getRaw()
                 data.concat(",");
             }
 
+            // person detection
             if (pixel_temperature > personThreshold)
             {
                 int blobSize = 1;
@@ -176,6 +174,9 @@ void getRaw()
             }
         }
     }
+    Serial.println("Payload construction and payload detection finished");
+
+    avg = avg / total_pixels;
 
     doc["sensor"] = sensor;
     doc["rows"] = rows;
@@ -193,19 +194,19 @@ void getRaw()
     doc["10fps"] = true;
     doc["person_detected"] = person_detected;
 
-    Serial.println("doc serializing");
+    Serial.println("output serializing");
     serializeJson(doc, new_output);
 
     output = new_output;
-    Serial.println("get raw finished. New output computed ");
+    Serial.println("get raw finished. New output computed");
 }
 
 void sendRaw()
 {
-    Serial.println("sendRaw");
+    Serial.println("started collcting data and sending");
     getRaw();
     server.send(200, "application/json", output.c_str());
-    Serial.println("raw sent");
+    Serial.println("data sent");
 }
 
 void notFound()
