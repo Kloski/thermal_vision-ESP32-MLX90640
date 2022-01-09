@@ -11,6 +11,17 @@
 
 #include <ESP_DoubleResetDetector.h>
 
+// global settings
+const char *sensor = "MLX90640";
+
+const int rows = 16;
+const int cols = 12;
+const int total_pixels = rows * cols;
+float frame[rows][cols];
+
+const float humanThreshold = 3.5;
+
+// camera settings
 const byte MLX90641_address = 0x33; //Default 7-bit unshifted address of the MLX90641
 #define TA_SHIFT 8                  //Default shift for MLX90641 in open air
 
@@ -20,17 +31,20 @@ uint16_t MLX90641Frame[242];
 paramsMLX90641 MLX90641;
 int errorno = 0;
 
+// ESP server settgins
 ESP8266WebServer server(80);
 DoubleResetDetector *drd;
 
 String output;
 
-const char *sensor = "MLX90640";
-
-const int rows = 16;
-const int cols = 12;
-const int total_pixels = rows * cols;
-float frame[rows][cols];
+float getPixel(int x, int y)
+{
+    if (x <= rows && x > 0 && y <= cols && y > 0)
+    {
+        return frame[x][y];
+    }
+    return (float)0.0;
+}
 
 void getRaw()
 {
@@ -52,69 +66,144 @@ void getRaw()
     String new_output;
     String data;
 
-    StaticJsonDocument<512> doc;
+    StaticJsonDocument<1024> doc;
 
+    bool person_detected = false;
+    float personThreshold = 0;
     int col = 0;
     int row = 0;
     float pixel_temperature;
     float min = 0;
     float max = 0;
     float avg = 0;
+    unsigned char local_min_index = 0;
+    unsigned char local_max_index = 0;
 
-    Serial.println("Starting temperature measurement");
+    Serial.println("Thermal camera grid:");
     for (int i = 0; i < total_pixels; i++)
     {
-        pixel_temperature = MLX90641To[i];
+        float cameraIndexVal = MLX90641To[i];
+        frame[row][col] = cameraIndexVal;
 
-        if (i == 0 || pixel_temperature > max)
+        Serial.print(cameraIndexVal);
+        Serial.print(" , ");
+
+        if (col + 1 == cols)
         {
-            max = pixel_temperature;
+            col = 0;
+            row++;
+            Serial.println("");
         }
-        if (i == 0 || pixel_temperature < min)
+        else
         {
-            min = pixel_temperature;
-        }
-
-        avg += pixel_temperature;
-
-        data.concat(String(pixel_temperature, 1));
-
-        if (i < total_pixels - 1)
-        {
-            data.concat(",");
+            col++;
         }
     }
-    Serial.println("computing finished");
+    Serial.println("");
+    Serial.println("");
 
     avg = avg / total_pixels;
-    Serial.print("avg: ");
-    Serial.println(avg);
+
+    // person detection + payload construction
+    for (int r = 0; r < rows; r++)
+    {
+        for (int c = 0; c < cols; c++)
+        {
+            int i = r + c * rows;
+            pixel_temperature = getPixel(r, c);
+
+            if (i == 0 || pixel_temperature > max)
+            {
+                max = pixel_temperature;
+                local_max_index = i;
+            }
+            if (i == 0 || pixel_temperature < min)
+            {
+                min = pixel_temperature;
+                local_min_index = i;
+            }
+
+            avg += pixel_temperature;
+
+            data.concat(String(pixel_temperature, 2));
+
+            if (i < total_pixels - 1)
+            {
+                data.concat(",");
+            }
+
+            if (pixel_temperature > personThreshold)
+            {
+                int blobSize = 1;
+
+                if (getPixel(r + 1, c - 1) > personThreshold - 2)
+                {
+                    blobSize++;
+                }
+                if (getPixel(r + 1, c) > personThreshold - 2)
+                {
+                    blobSize++;
+                }
+                if (getPixel(r + 1, c + 1) > personThreshold - 2)
+                {
+                    blobSize++;
+                }
+                if (getPixel(r, c + 1) > personThreshold - 2)
+                {
+                    blobSize++;
+                }
+                if (getPixel(r, c - 1) > personThreshold - 2)
+                {
+                    blobSize++;
+                }
+                if (getPixel(r - 1, c - 1) > personThreshold - 2)
+                {
+                    blobSize++;
+                }
+                if (getPixel(r - 1, c) > personThreshold - 2)
+                {
+                    blobSize++;
+                }
+                if (getPixel(r - 1, c + 1) > personThreshold - 2)
+                {
+                    blobSize++;
+                }
+
+                if (blobSize > 4)
+                {
+                    person_detected = true;
+                }
+            }
+        }
+    }
 
     doc["sensor"] = sensor;
     doc["rows"] = rows;
     doc["cols"] = cols;
     doc["data"] = data.c_str();
+    doc["temp"] = avg;
     doc["min"] = min;
     doc["max"] = max;
     doc["avg"] = avg;
-    doc["person_detected"] = max - min > 4;
+    doc["min_index"] = local_min_index;
+    doc["max_index"] = local_max_index;
+    doc["overflow"] = false;
+    doc["movingAverageEnabled"] = false;
+    doc["interruptPinEnabled"] = false;
+    doc["10fps"] = true;
+    doc["person_detected"] = person_detected;
 
     Serial.println("doc serializing");
     serializeJson(doc, new_output);
 
-    Serial.print("old_output: ");
-    Serial.println(output);
-    Serial.print("new_output: ");
-    Serial.println(new_output);
     output = new_output;
+    Serial.println("get raw finished. New output computed ");
 }
 
 void sendRaw()
 {
     Serial.println("sendRaw");
     getRaw();
-    Serial.println("raw obtained, start sending output: ");
-    Serial.println(output);
     server.send(200, "application/json", output.c_str());
     Serial.println("raw sent");
 }
@@ -150,6 +239,7 @@ void setup()
         while (1)
             ;
     }
+
     //Get device parameters - We only have to do this once
     int status;
     status = MLX90641_DumpEE(MLX90641_address, eeMLX90641);
@@ -163,15 +253,12 @@ void setup()
     }
 
     status = MLX90641_ExtractParameters(eeMLX90641, &MLX90641);
-    //errorno = status;
     if (status != 0)
     {
         Serial.println("Parameter extraction failed");
         while (1)
             ;
     }
-
-    //Once params are extracted, we can release eeMLX90641 array
 
     //MLX90641_SetRefreshRate(MLX90641_address, 0x02); //Set rate to 2Hz
     MLX90641_SetRefreshRate(MLX90641_address, 0x03); //Set rate to 4Hz
