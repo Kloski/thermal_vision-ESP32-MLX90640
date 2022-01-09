@@ -4,6 +4,21 @@
         "string_view": "cpp",
         "initializer_list": "cpp",
         "utility": "cpp",
-        "*.tpp": "cpp"
+        "*.tpp": "cpp",
+        "*.tcc": "cpp",
+        "algorithm": "cpp",
+        "deque": "c",
+        "list": "c",
+        "string": "c",
+        "unordered_map": "c",
+        "vector": "c",
+        "memory": "c",
+        "random": "c",
+        "ranges": "c",
+        "iosfwd": "cpp",
+        "istream": "cpp",
+        "numeric": "cpp",
+        "ostream": "cpp",
+        "streambuf": "cpp"
     }
 }
