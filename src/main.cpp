@@ -212,6 +212,8 @@ void sendRaw()
 void restart()
 {
     Serial.println("restarting ESP");
+    server.send(200, "text/plain", "OK, let's do it!");
+    delay(1000); // wait for sending response
     ESP.restart();
 }
 
