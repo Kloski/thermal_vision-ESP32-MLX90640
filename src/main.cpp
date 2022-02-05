@@ -19,7 +19,7 @@ const int cols = 12;
 const int total_pixels = rows * cols;
 float frame[rows][cols];
 
-const float humanThreshold = 5.9;
+const int humanThreshold = 5;
 
 // camera settings
 const byte MLX90641_address = 0x33; //Default 7-bit unshifted address of the MLX90641
@@ -76,8 +76,8 @@ void getRaw()
     float min = 0;
     float max = 0;
     float avg = 0;
-    unsigned char local_min_index = 0;
-    unsigned char local_max_index = 0;
+    unsigned char min_index = 0;
+    unsigned char max_index = 0;
 
     Serial.println("Starting frame construction");
     for (int i = 0; i < total_pixels; i++)
@@ -112,12 +112,12 @@ void getRaw()
             if (i == 0 || pixel_temperature > max)
             {
                 max = pixel_temperature;
-                local_max_index = i;
+                max_index = i;
             }
             if (i == 0 || pixel_temperature < min)
             {
                 min = pixel_temperature;
-                local_min_index = i;
+                min_index = i;
             }
 
             avg += pixel_temperature;
@@ -132,42 +132,42 @@ void getRaw()
             // person detection
             if (pixel_temperature > personThreshold)
             {
-                int blobSize = 1;
+                int pixelsExceededPersonThreshold = 1;
 
                 if (getPixel(r + 1, c - 1) > personThreshold - 2)
                 {
-                    blobSize++;
+                    pixelsExceededPersonThreshold++;
                 }
                 if (getPixel(r + 1, c) > personThreshold - 2)
                 {
-                    blobSize++;
+                    pixelsExceededPersonThreshold++;
                 }
                 if (getPixel(r + 1, c + 1) > personThreshold - 2)
                 {
-                    blobSize++;
+                    pixelsExceededPersonThreshold++;
                 }
                 if (getPixel(r, c + 1) > personThreshold - 2)
                 {
-                    blobSize++;
+                    pixelsExceededPersonThreshold++;
                 }
                 if (getPixel(r, c - 1) > personThreshold - 2)
                 {
-                    blobSize++;
+                    pixelsExceededPersonThreshold++;
                 }
                 if (getPixel(r - 1, c - 1) > personThreshold - 2)
                 {
-                    blobSize++;
+                    pixelsExceededPersonThreshold++;
                 }
                 if (getPixel(r - 1, c) > personThreshold - 2)
                 {
-                    blobSize++;
+                    pixelsExceededPersonThreshold++;
                 }
                 if (getPixel(r - 1, c + 1) > personThreshold - 2)
                 {
-                    blobSize++;
+                    pixelsExceededPersonThreshold++;
                 }
 
-                if (blobSize > 5)
+                if (pixelsExceededPersonThreshold > humanThreshold)
                 {
                     person_detected = true;
                 }
@@ -186,12 +186,12 @@ void getRaw()
     doc["min"] = min;
     doc["max"] = max;
     doc["avg"] = avg;
-    doc["min_index"] = local_min_index;
-    doc["max_index"] = local_max_index;
+    doc["min_index"] = min_index;
+    doc["max_index"] = max_index;
     doc["overflow"] = false;
     doc["movingAverageEnabled"] = false;
     doc["interruptPinEnabled"] = false;
-    doc["10fps"] = true;
+    doc["10fps"] = false;
     doc["person_detected"] = person_detected;
 
     Serial.println("output serializing");
