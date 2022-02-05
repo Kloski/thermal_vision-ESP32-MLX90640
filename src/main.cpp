@@ -19,7 +19,7 @@ const int cols = 12;
 const int total_pixels = rows * cols;
 float frame[rows][cols];
 
-const float humanThreshold = 3.5;
+const float humanThreshold = 5.9;
 
 // camera settings
 const byte MLX90641_address = 0x33; //Default 7-bit unshifted address of the MLX90641
@@ -69,7 +69,7 @@ void getRaw()
     StaticJsonDocument<1024> doc;
 
     bool person_detected = false;
-    float personThreshold = 0;
+    float personThreshold = 26;
     int col = 0;
     int row = 0;
     float pixel_temperature;
@@ -167,7 +167,7 @@ void getRaw()
                     blobSize++;
                 }
 
-                if (blobSize > 4)
+                if (blobSize > 5)
                 {
                     person_detected = true;
                 }
@@ -207,6 +207,12 @@ void sendRaw()
     getRaw();
     server.send(200, "application/json", output.c_str());
     Serial.println("data sent");
+}
+
+void restart()
+{
+    Serial.println("restarting ESP");
+    ESP.restart();
 }
 
 void notFound()
@@ -299,6 +305,7 @@ void setup()
         }
 
         server.on("/raw", sendRaw);
+        server.on("/restart", restart);
         server.onNotFound(notFound);
 
         Serial.println("server begin");
