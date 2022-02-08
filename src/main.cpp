@@ -316,12 +316,40 @@ void setup()
     }
 }
 
+// https://forum.arduino.cc/t/sketch-to-convert-milliseconds-to-hours-minutes-and-seconds-hh-mm-ss/636386
+// https://forum.arduino.cc/t/using-millis-for-timing-a-beginners-guide/483573
+// https://www.arduino.cc/reference/en/language/functions/time/millis/
+int getUptimeHours()
+{
+    long currentMillis = millis();
+    long seconds = currentMillis / 1000;
+    int minutes = seconds / 60;
+    int hours = minutes / 60;
+    //long days = hours / 24;
+
+    // currentMillis %= 1000;
+    // seconds %= 60;
+    // minutes %= 60;
+    // hours %= 24;
+
+    // Serial.print("Uptime seconds: ");
+    // Serial.println(seconds);
+    // Serial.print("Uptime hours: ");
+    // Serial.println(hours);
+
+     return hours;
+}
+
 void loop()
 {
     if (WiFi.status() == WL_CONNECTED)
     {
         delay(100);
         server.handleClient();
+    }
+    if (getUptimeHours() > 6)
+    {
+        restart();
     }
     drd->loop();
 }
