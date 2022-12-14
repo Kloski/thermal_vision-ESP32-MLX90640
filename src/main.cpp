@@ -11,25 +11,26 @@
 
 #include <ESP_DoubleResetDetector.h>
 
-// global settings
-const char *sensor = "MLX90640";
-
+// camera settings
+const byte MLX90641_address = 0x33; // Default 7-bit unshifted address of the MLX90641
+#define TA_SHIFT 8                  // Default shift for MLX90641 in open air
+// camera resolution
 const int rows = 16;
 const int cols = 12;
-const int total_pixels = rows * cols;
 float frame[rows][cols];
-
-const int humanThreshold = 5;
-
-// camera settings
-const byte MLX90641_address = 0x33; //Default 7-bit unshifted address of the MLX90641
-#define TA_SHIFT 8                  //Default shift for MLX90641 in open air
-
-uint16_t eeMLX90641[832];
+const int total_pixels = rows * cols;
+// camera frame
 float MLX90641To[total_pixels];
+uint16_t eeMLX90641[832];
 uint16_t MLX90641Frame[242];
 paramsMLX90641 MLX90641;
-int errorno = 0;
+
+// person detection values - can be configured via request params
+// http://192.168.1.123/raw?personThresholdLow=26&personThresholdHigh=40&humanThreshold=3&personTempDecrease=2
+float personThresholdLow = 26;
+float personThresholdHigh = 40;
+int humanThreshold = 3;
+int personTempDecrease = 2;
 
 // ESP server settgins
 ESP8266WebServer server(80);
@@ -46,7 +47,7 @@ float getPixel(int x, int y)
     return (float)0.0;
 }
 
-void getRaw()
+void getRaw(float personThresholdDown, float personThresholdUp, int humanThreshold, int humanTempDecrease)
 {
     Serial.println("getRaw called - Starting MLX90641Frame computation");
     for (byte x = 0; x < 2; x++)
@@ -56,52 +57,47 @@ void getRaw()
         float vdd = MLX90641_GetVdd(MLX90641Frame, &MLX90641);
         float Ta = MLX90641_GetTa(MLX90641Frame, &MLX90641);
 
-        float tr = Ta - TA_SHIFT; //Reflected temperature based on the sensor ambient temperature
+        float tr = Ta - TA_SHIFT; // Reflected temperature based on the sensor ambient temperature
         float emissivity = 0.95;
 
         MLX90641_CalculateTo(MLX90641Frame, &MLX90641, emissivity, tr, MLX90641To);
     }
     Serial.println("Starting MLX90641Frame computation finished");
 
-    String new_output;
-    String data;
-
-    StaticJsonDocument<1024> doc;
-
-    bool person_detected = false;
-    float personThreshold = 26;
-    int col = 0;
-    int row = 0;
-    float pixel_temperature;
-    float min = 0;
-    float max = 0;
-    float avg = 0;
-    unsigned char min_index = 0;
-    unsigned char max_index = 0;
+    // ####################################################################################################################
 
     Serial.println("Starting frame construction");
+    int col = 0;
+    int row = 0;
     for (int i = 0; i < total_pixels; i++)
     {
         float cameraIndexVal = MLX90641To[i];
         frame[row][col] = cameraIndexVal;
 
-        // Serial.print(cameraIndexVal);
-        // Serial.print(" , ");
-
         if (row + 1 == rows)
         {
             row = 0;
             col++;
-            // Serial.println("");
         }
         else
         {
             row++;
         }
     }
+    Serial.println("Frame construction finished");
 
-    Serial.println("Frame construction finished. Continuing with payload and person detection");
+    // ####################################################################################################################
 
+    Serial.println("Starting payload and person detection");
+
+    String data;
+    bool person_detected = false;
+    float pixel_temperature;
+    float min = 0;
+    float max = 0;
+    float avg = 0;
+    unsigned char min_index = 0;
+    unsigned char max_index = 0;
     for (int r = 0; r < rows; r++)
     {
         for (int c = 0; c < cols; c++)
@@ -130,39 +126,41 @@ void getRaw()
             }
 
             // person detection
-            if (pixel_temperature > personThreshold)
+            if (pixel_temperature > personThresholdDown && pixel_temperature < personThresholdUp)
             {
                 int pixelsExceededPersonThreshold = 1;
 
-                if (getPixel(r + 1, c - 1) > personThreshold - 2)
+                int personThresholdRelaxed = personThresholdDown - humanTempDecrease;
+
+                if (getPixel(r + 1, c - 1) > personThresholdRelaxed)
                 {
                     pixelsExceededPersonThreshold++;
                 }
-                if (getPixel(r + 1, c) > personThreshold - 2)
+                if (getPixel(r + 1, c) > personThresholdRelaxed)
                 {
                     pixelsExceededPersonThreshold++;
                 }
-                if (getPixel(r + 1, c + 1) > personThreshold - 2)
+                if (getPixel(r + 1, c + 1) > personThresholdRelaxed)
                 {
                     pixelsExceededPersonThreshold++;
                 }
-                if (getPixel(r, c + 1) > personThreshold - 2)
+                if (getPixel(r, c + 1) > personThresholdRelaxed)
                 {
                     pixelsExceededPersonThreshold++;
                 }
-                if (getPixel(r, c - 1) > personThreshold - 2)
+                if (getPixel(r, c - 1) > personThresholdRelaxed)
                 {
                     pixelsExceededPersonThreshold++;
                 }
-                if (getPixel(r - 1, c - 1) > personThreshold - 2)
+                if (getPixel(r - 1, c - 1) > personThresholdRelaxed)
                 {
                     pixelsExceededPersonThreshold++;
                 }
-                if (getPixel(r - 1, c) > personThreshold - 2)
+                if (getPixel(r - 1, c) > personThresholdRelaxed)
                 {
                     pixelsExceededPersonThreshold++;
                 }
-                if (getPixel(r - 1, c + 1) > personThreshold - 2)
+                if (getPixel(r - 1, c + 1) > personThresholdRelaxed)
                 {
                     pixelsExceededPersonThreshold++;
                 }
@@ -176,9 +174,16 @@ void getRaw()
     }
     Serial.println("Payload construction and payload detection finished");
 
+    // ####################################################################################################################
+
+    Serial.println("Start building response payload");
+
+    String new_output;
+    StaticJsonDocument<1024> doc;
+
     avg = avg / total_pixels;
 
-    doc["sensor"] = sensor;
+    doc["sensor"] = "MLX90641";
     doc["rows"] = rows;
     doc["cols"] = cols;
     doc["data"] = data.c_str();
@@ -203,8 +208,61 @@ void getRaw()
 
 void sendRaw()
 {
+    Serial.print("sendRaw called - argument parsing. URL: ");
+    String uri = server.uri(); // Get paths // https://stackoverflow.com/questions/69142021/grab-full-url-from-esp8266webserver
+    Serial.println(uri);
+
+    // https://forum.arduino.cc/t/esp8266-webserver-handling-multiple-requests/607950/4
+    // https://forum.arduino.cc/t/is-this-the-best-way-to-get-data-from-a-http-request/678197/12
+    String argsString = "Number of args received:";
+    argsString += server.args(); // Get number of parameters
+    argsString += "\n";
+    for (int i = 0; i < server.args(); i++)
+    {
+        String argName = server.argName(i);
+        String argValue = server.arg(i);
+        argsString += "Arg " + (String)i + ": "; // Include the current iteration value
+        argsString += argName + ": ";            // Get the name of the parameter
+        argsString += argValue + "\n";           // Get the value of the parameter
+
+        if (argName == "personThresholdLow")
+        {
+            Serial.print("Changing personThresholdLow (");
+            Serial.print(personThresholdLow);
+            Serial.print(") to: ");
+            personThresholdLow = atof(argValue.c_str());
+            Serial.println(personThresholdLow);
+        }
+        else if (argName == "personThresholdHigh")
+        {
+            Serial.print("Changing personThresholdHigh (");
+            Serial.print(personThresholdHigh);
+            Serial.print(") to: ");
+            personThresholdHigh = atof(argValue.c_str());
+            Serial.println(personThresholdHigh);
+        }
+        else if (argName == "humanThreshold")
+        {
+            Serial.print("Changing humanThreshold (");
+            Serial.print(humanThreshold);
+            Serial.print(") to: ");
+            humanThreshold = atoi(argValue.c_str());
+            Serial.println(humanThreshold);
+        }
+        else if (argName == "personTempDecrease")
+        {
+            Serial.print("Changing personTempDecrease (");
+            Serial.print(personTempDecrease);
+            Serial.print(") to: ");
+            personTempDecrease = atoi(argValue.c_str());
+            Serial.println(personTempDecrease);
+        }
+    }
+    Serial.println(argsString);
+    Serial.println("sendRaw called - argument parsed");
+
     Serial.println("started collcting data and sending");
-    getRaw();
+    getRaw(personThresholdLow, personThresholdHigh, humanThreshold, personTempDecrease);
     server.send(200, "application/json", output.c_str());
     Serial.println("data sent");
 }
@@ -223,14 +281,14 @@ void notFound()
     server.send(404, "text/plain", "Not found");
 }
 
-//Returns true if the MLX90641 is detected on the I2C bus
+// Returns true if the MLX90641 is detected on the I2C bus
 boolean isConnected()
 {
     Wire.beginTransmission((uint8_t)MLX90641_address);
 
     if (Wire.endTransmission() != 0)
     {
-        return (false); //Sensor did not ACK
+        return (false); // Sensor did not ACK
     }
     return (true);
 }
@@ -240,7 +298,7 @@ void setup()
     Serial.begin(9600);
 
     Wire.begin();
-    Wire.setClock(400000); //Increase I2C clock speed to 400kHz
+    Wire.setClock(400000); // Increase I2C clock speed to 400kHz
 
     if (isConnected() == false)
     {
@@ -249,10 +307,10 @@ void setup()
             ;
     }
 
-    //Get device parameters - We only have to do this once
+    // Get device parameters - We only have to do this once
     int status;
     status = MLX90641_DumpEE(MLX90641_address, eeMLX90641);
-    errorno = status; //MLX90641_CheckEEPROMValid(eeMLX90641);//eeMLX90641[10] & 0x0040;//
+    int errorno = status; // MLX90641_CheckEEPROMValid(eeMLX90641); //eeMLX90641[10] & 0x0040; //
 
     if (status != 0)
     {
@@ -269,9 +327,9 @@ void setup()
             ;
     }
 
-    //MLX90641_SetRefreshRate(MLX90641_address, 0x02); //Set rate to 2Hz
-    MLX90641_SetRefreshRate(MLX90641_address, 0x03); //Set rate to 4Hz
-    //MLX90641_SetRefreshRate(MLX90641_address, 0x07); //Set rate to 64Hz
+    // MLX90641_SetRefreshRate(MLX90641_address, 0x02); //Set rate to 2Hz
+    MLX90641_SetRefreshRate(MLX90641_address, 0x03); // Set rate to 4Hz
+    // MLX90641_SetRefreshRate(MLX90641_address, 0x07); //Set rate to 64Hz
 
     WiFi.mode(WIFI_STA);
 
@@ -325,19 +383,9 @@ int getUptimeHours()
     long seconds = currentMillis / 1000;
     int minutes = seconds / 60;
     int hours = minutes / 60;
-    //long days = hours / 24;
+    // long days = hours / 24;
 
-    // currentMillis %= 1000;
-    // seconds %= 60;
-    // minutes %= 60;
-    // hours %= 24;
-
-    // Serial.print("Uptime seconds: ");
-    // Serial.println(seconds);
-    // Serial.print("Uptime hours: ");
-    // Serial.println(hours);
-
-     return hours;
+    return hours;
 }
 
 void loop()
@@ -347,7 +395,7 @@ void loop()
         delay(100);
         server.handleClient();
     }
-    if (getUptimeHours() > 6)
+    if (getUptimeHours() > 1)
     {
         restart();
     }
