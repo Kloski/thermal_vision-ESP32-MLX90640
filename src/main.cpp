@@ -26,10 +26,10 @@ uint16_t MLX90641Frame[242];
 paramsMLX90641 MLX90641;
 
 // person detection values - can be configured via request params
-// http://192.168.1.123/raw?personThresholdLow=26&personThresholdHigh=40&humanThreshold=3&personTempDecrease=2
-float personThresholdLow = 26;
+// http://192.168.1.123/update?personThresholdLow=30&personThresholdHigh=40&humanThreshold=2&personTempDecrease=2
+float personThresholdLow = 30;
 float personThresholdHigh = 40;
-int humanThreshold = 3;
+int humanThreshold = 2;
 int personTempDecrease = 2;
 
 // ESP server settgins
@@ -206,24 +206,28 @@ void getRaw(float personThresholdDown, float personThresholdUp, int humanThresho
     Serial.println("get raw finished. New output computed");
 }
 
-void sendRaw()
+void updateProperties()
 {
-    Serial.print("sendRaw called - argument parsing. URL: ");
+    Serial.print("updateProperties called - argument parsing. URL: ");
     String uri = server.uri(); // Get paths // https://stackoverflow.com/questions/69142021/grab-full-url-from-esp8266webserver
     Serial.println(uri);
 
     // https://forum.arduino.cc/t/esp8266-webserver-handling-multiple-requests/607950/4
     // https://forum.arduino.cc/t/is-this-the-best-way-to-get-data-from-a-http-request/678197/12
-    String argsString = "Number of args received:";
-    argsString += server.args(); // Get number of parameters
-    argsString += "\n";
+    String argsString = "{";
+    // argsString += server.args(); // Get number of parameters
     for (int i = 0; i < server.args(); i++)
     {
+        if (i > 0)
+        {
+            argsString += ",";
+        }
+        argsString += "\n\"";
         String argName = server.argName(i);
         String argValue = server.arg(i);
-        argsString += "Arg " + (String)i + ": "; // Include the current iteration value
-        argsString += argName + ": ";            // Get the name of the parameter
-        argsString += argValue + "\n";           // Get the value of the parameter
+        // argsString += "Arg " + (String)i + ": "; // Include the current iteration value
+        argsString += argName + "\": "; // Get the name of the parameter
+        argsString += argValue;         // Get the value of the parameter
 
         if (argName == "personThresholdLow")
         {
@@ -258,13 +262,22 @@ void sendRaw()
             Serial.println(personTempDecrease);
         }
     }
+    argsString += "\n}";
     Serial.println(argsString);
-    Serial.println("sendRaw called - argument parsed");
+
+    server.send(200, "application/json", argsString.c_str());
+    Serial.println("updateProperties called - arguments parsed");
+}
+
+void sendRaw()
+{
+    Serial.println("sendRaw called");
+    // updateProperties();
 
     Serial.println("started collcting data and sending");
     getRaw(personThresholdLow, personThresholdHigh, humanThreshold, personTempDecrease);
     server.send(200, "application/json", output.c_str());
-    Serial.println("data sent");
+    Serial.println("sendRaw finished - data sent");
 }
 
 void restart()
@@ -366,6 +379,7 @@ void setup()
 
         server.on("/raw", sendRaw);
         server.on("/restart", restart);
+        server.on("/update", updateProperties);
         server.onNotFound(notFound);
 
         Serial.println("server begin");
