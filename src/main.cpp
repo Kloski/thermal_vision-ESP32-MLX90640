@@ -20,7 +20,6 @@ const byte MLX90641_address = 0x33; // Default 7-bit unshifted address of the ML
 // camera resolution
 const int rows = 16;
 const int cols = 12;
-float frame[rows][cols];
 const int total_pixels = rows * cols;
 // camera frame
 float MLX90641To[total_pixels];
@@ -39,16 +38,7 @@ DoubleResetDetector *drd;
 
 String output;
 
-float getPixel(int x, int y)
-{
-    if (x < rows && x >= 0 && y < cols && y >= 0)
-    {
-        return frame[x][y];
-    }
-    return (float)0.0;
-}
-
-void getRaw(int humanThreshold, float tempKoef)
+void refreshCameraTempsFrame()
 {
     Serial.println("getRaw called - Starting MLX90641Frame computation");
     for (byte x = 0; x < 2; x++)
@@ -69,82 +59,57 @@ void getRaw(int humanThreshold, float tempKoef)
         MLX90641_CalculateTo(MLX90641Frame, &MLX90641, emissivity, tr, MLX90641To);
     }
     Serial.println("Starting MLX90641Frame computation finished");
+}
 
-    // ####################################################################################################################
+void getRaw(int humanThreshold, float tempKoef)
+{
+    Serial.println("Starting payload construction");
 
-    Serial.println("Starting frame construction");
-    int col = 0;
-    int row = 0;
-    std::map<int, int> tempMap = {};
+    std::map<int, int> tempCountMap = {};
     float avgTemp = 0;
-    for (int i = 0; i < total_pixels; i++)
-    {
-        float cameraIndexVal = MLX90641To[i];
-        frame[row][col] = cameraIndexVal;
-        avgTemp += cameraIndexVal / total_pixels;
-
-        // https://en.cppreference.com/w/cpp/container/map/find
-        int intTemp = static_cast<int>(cameraIndexVal);
-        if (auto search = tempMap.find(intTemp); search != tempMap.end())
-        {
-            // found
-            tempMap[intTemp]++;
-        }
-        else
-        {
-            // not found
-            tempMap[intTemp] = 1;
-        }
-
-        if (row + 1 == rows)
-        {
-            row = 0;
-            col++;
-        }
-        else
-        {
-            row++;
-        }
-    }
-    Serial.println("Frame construction finished");
-
-    // ####################################################################################################################
-
-    Serial.println("Starting payload and person detection");
-
-    String data;
-    float pixel_temperature;
     float min = 0;
     float max = 0;
     unsigned char min_index = 0;
     unsigned char max_index = 0;
-    for (int r = 0; r < rows; r++)
+    String data;
+    for (int i = 0; i < total_pixels; i++)
     {
-        for (int c = 0; c < cols; c++)
+        float pixel_temperature = MLX90641To[i];
+        avgTemp += pixel_temperature / total_pixels;
+
+        if (i == 0 || pixel_temperature > max)
         {
-            int i = r + c * rows;
-            pixel_temperature = getPixel(r, c);
+            max = pixel_temperature;
+            max_index = i;
+        }
+        if (i == 0 || pixel_temperature < min)
+        {
+            min = pixel_temperature;
+            min_index = i;
+        }
 
-            if (i == 0 || pixel_temperature > max)
-            {
-                max = pixel_temperature;
-                max_index = i;
-            }
-            if (i == 0 || pixel_temperature < min)
-            {
-                min = pixel_temperature;
-                min_index = i;
-            }
+        data.concat(String(pixel_temperature, 2));
 
-            data.concat(String(pixel_temperature, 2));
+        if (i < total_pixels - 1)
+        {
+            data.concat(",");
+        }
 
-            if (i < total_pixels - 1)
-            {
-                data.concat(",");
-            }
+        // https://en.cppreference.com/w/cpp/container/map/find
+        int intTemp = static_cast<int>(pixel_temperature);
+        if (auto search = tempCountMap.find(intTemp); search != tempCountMap.end())
+        {
+            // found
+            tempCountMap[intTemp]++;
+        }
+        else
+        {
+            // not found
+            tempCountMap[intTemp] = 1;
         }
     }
-    Serial.println("Temp payload construction");
+
+    Serial.println("Payload construction finished");
 
     // ####################################################################################################################
 
@@ -152,17 +117,15 @@ void getRaw(int humanThreshold, float tempKoef)
 
     const float tempThreshold = avgTemp + ((avgTemp - min) * tempKoef);
     int tempAboveThresholdCount = 0;
-    for (int r = 0; r < rows; r++)
+    for (int i = 0; i < total_pixels; i++) // same cycle as above
     {
-        for (int c = 0; c < cols; c++)
+        float pixel_temperature = MLX90641To[i];
+        if (tempThreshold < pixel_temperature)
         {
-            pixel_temperature = getPixel(r, c);
-            if (tempThreshold < pixel_temperature)
-            {
-                tempAboveThresholdCount++;
-            }
+            tempAboveThresholdCount++;
         }
     }
+
     Serial.println("Person detection finished");
 
     // ####################################################################################################################
@@ -177,16 +140,24 @@ void getRaw(int humanThreshold, float tempKoef)
     doc["cols"] = cols;
     doc["data"] = data.c_str();
     doc["temp"] = avgTemp;
+    doc["avg"] = avgTemp;
     doc["min"] = min;
     doc["max"] = max;
-    doc["avg"] = avgTemp;
     doc["min_index"] = min_index;
     doc["max_index"] = max_index;
     doc["overflow"] = false;
     doc["movingAverageEnabled"] = false;
-    doc["interruptPinEnabled"] = false;
-    doc["10fps"] = false;
+    // doc["interruptPinEnabled"] = false;
+    // doc["10fps"] = false;
     doc["person_detected"] = tempAboveThresholdCount >= humanThreshold;
+
+    std::string tempCountMapCsv = "";
+    for (auto it = tempCountMap.cbegin(); it != tempCountMap.cend(); it++)
+    {
+        std::string convrt = std::to_string(it->second);
+        tempCountMapCsv += (it->first) + ":" + (convrt) + ", ";
+    }
+    doc["tempCountMap"] = tempCountMapCsv.substr(0, tempCountMapCsv.size() - 2);
 
     Serial.println("output serializing");
     serializeJson(doc, new_output);
@@ -245,7 +216,9 @@ void updateProperties()
 void sendRaw()
 {
     Serial.println("sendRaw called");
+
     // updateProperties();
+    refreshCameraTempsFrame();
 
     Serial.println("started collcting data and sending");
     getRaw(humanThreshold, tempKoef);
