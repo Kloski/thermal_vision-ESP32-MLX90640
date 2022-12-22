@@ -4,9 +4,6 @@
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <WiFiManager.h>
-#include <map>
-#include <iostream>
-#include <list>
 
 #define ESP8266_DRD_USE_RTC false
 #define ESP_DRD_USE_LITTLEFS true
@@ -20,6 +17,7 @@ const byte MLX90641_address = 0x33; // Default 7-bit unshifted address of the ML
 // camera resolution
 const int rows = 16;
 const int cols = 12;
+float frame[rows][cols];
 const int total_pixels = rows * cols;
 // camera frame
 float MLX90641To[total_pixels];
@@ -38,9 +36,18 @@ DoubleResetDetector *drd;
 
 String output;
 
+float getPixel(int x, int y)
+{
+    if (x < rows && x >= 0 && y < cols && y >= 0)
+    {
+        return frame[x][y];
+    }
+    return (float)0.0;
+}
+
 void refreshCameraTempsFrame()
 {
-    Serial.println("getRaw called - Starting MLX90641Frame computation");
+    Serial.println("getRaw called - Starting MLX90641 Frame computation");
     for (byte x = 0; x < 2; x++)
     {
         int status = MLX90641_GetFrameData(MLX90641_address, MLX90641Frame);
@@ -58,54 +65,79 @@ void refreshCameraTempsFrame()
 
         MLX90641_CalculateTo(MLX90641Frame, &MLX90641, emissivity, tr, MLX90641To);
     }
-    Serial.println("Starting MLX90641Frame computation finished");
+    Serial.println("Starting MLX90641 Frame computation finished");
+
+    // ####################################################################################################################
+
+    Serial.println("Starting temp frame construction");
+    int col = 0;
+    int row = 0;
+    for (int i = 0; i < total_pixels; i++)
+    {
+        frame[row][col] = MLX90641To[i];
+
+        if (row + 1 == rows)
+        {
+            row = 0;
+            col++;
+        }
+        else
+        {
+            row++;
+        }
+    }
+    Serial.println("Temp frame construction finished");
 }
 
 void getRaw(int humanThreshold, float tempKoef)
 {
     Serial.println("Starting payload construction");
 
-    std::map<int, int> tempCountMap = {};
+    // std::map<int, int> tempCountMap = {};
     float avgTemp = 0;
     float min = 0;
     float max = 0;
     unsigned char min_index = 0;
     unsigned char max_index = 0;
     String data;
-    for (int i = 0; i < total_pixels; i++)
+    for (int r = 0; r < rows; r++)
     {
-        float pixel_temperature = MLX90641To[i];
-        avgTemp += pixel_temperature / total_pixels;
+        for (int c = 0; c < cols; c++)
+        {
+            int i = r + c * rows;
+            float pixel_temperature = getPixel(r, c);
+            avgTemp += pixel_temperature / total_pixels;
 
-        if (i == 0 || pixel_temperature > max)
-        {
-            max = pixel_temperature;
-            max_index = i;
-        }
-        if (i == 0 || pixel_temperature < min)
-        {
-            min = pixel_temperature;
-            min_index = i;
-        }
+            if (i == 0 || pixel_temperature > max)
+            {
+                max = pixel_temperature;
+                max_index = i;
+            }
+            if (i == 0 || pixel_temperature < min)
+            {
+                min = pixel_temperature;
+                min_index = i;
+            }
 
-        data.concat(String(pixel_temperature, 2));
+            data.concat(String(pixel_temperature, 2));
 
-        if (i < total_pixels - 1)
-        {
-            data.concat(",");
-        }
+            if (i < total_pixels - 1)
+            {
+                data.concat(",");
+            }
 
-        // https://en.cppreference.com/w/cpp/container/map/find
-        int intTemp = static_cast<int>(pixel_temperature);
-        if (auto search = tempCountMap.find(intTemp); search != tempCountMap.end())
-        {
-            // found
-            tempCountMap[intTemp]++;
-        }
-        else
-        {
-            // not found
-            tempCountMap[intTemp] = 1;
+            // https://en.cppreference.com/w/cpp/container/map/find
+            // int intTemp = static_cast<int>(pixel_temperature);
+            // if (auto search = tempCountMap.find(intTemp); search != tempCountMap.end())
+            // {
+            //     // found
+            //     tempCountMap[intTemp]++;
+            // }
+            // else
+            // {
+            //     // not found
+            //     tempCountMap[intTemp] = 1;
+            // }
         }
     }
 
@@ -147,17 +179,15 @@ void getRaw(int humanThreshold, float tempKoef)
     doc["max_index"] = max_index;
     doc["overflow"] = false;
     doc["movingAverageEnabled"] = false;
-    // doc["interruptPinEnabled"] = false;
-    // doc["10fps"] = false;
     doc["person_detected"] = tempAboveThresholdCount >= humanThreshold;
 
-    std::string tempCountMapCsv = "";
-    for (auto it = tempCountMap.cbegin(); it != tempCountMap.cend(); it++)
-    {
-        std::string convrt = std::to_string(it->second);
-        tempCountMapCsv += (it->first) + ":" + (convrt) + ", ";
-    }
-    doc["tempCountMap"] = tempCountMapCsv.substr(0, tempCountMapCsv.size() - 2);
+    // std::string tempCountMapCsv = "";
+    // for (auto it = tempCountMap.cbegin(); it != tempCountMap.cend(); it++)
+    // {
+    //     std::string convrt = std::to_string(it->second);
+    //     tempCountMapCsv += (it->first) + ":" + (convrt) + ", ";
+    // }
+    // doc["tempCountMap"] = tempCountMapCsv.substr(0, tempCountMapCsv.size() - 2);
 
     Serial.println("output serializing");
     serializeJson(doc, new_output);
