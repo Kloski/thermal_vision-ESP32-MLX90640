@@ -27,8 +27,12 @@ paramsMLX90641 MLX90641;
 
 // person detection values - can be configured via request params
 // http://192.168.1.123/update?personThresholdLow=30&personThresholdHigh=40&humanThreshold=2&personTempDecrease=2
-int humanThreshold = 2;
-float tempKoef = 1.5;
+int humanThreshold = 3;
+float tempKoef = 1.6;
+float minHumanTemp = 25.5;
+int minNeighboursCount = 2;
+int delayOutputComputation = 8;
+long mainLoopCounter = delayOutputComputation;
 
 // ESP server settgins
 ESP8266WebServer server(80);
@@ -43,6 +47,45 @@ float getPixel(int x, int y)
         return frame[x][y];
     }
     return (float)0.0;
+}
+
+int getNeighboursCount(int r, int c, float threashold)
+{
+    int pixelsExceededPersonThreshold = 0;
+
+    if (getPixel(r + 1, c - 1) > threashold)
+    {
+        pixelsExceededPersonThreshold++;
+    }
+    if (getPixel(r + 1, c) > threashold)
+    {
+        pixelsExceededPersonThreshold++;
+    }
+    if (getPixel(r + 1, c + 1) > threashold)
+    {
+        pixelsExceededPersonThreshold++;
+    }
+    if (getPixel(r, c + 1) > threashold)
+    {
+        pixelsExceededPersonThreshold++;
+    }
+    if (getPixel(r, c - 1) > threashold)
+    {
+        pixelsExceededPersonThreshold++;
+    }
+    if (getPixel(r - 1, c - 1) > threashold)
+    {
+        pixelsExceededPersonThreshold++;
+    }
+    if (getPixel(r - 1, c) > threashold)
+    {
+        pixelsExceededPersonThreshold++;
+    }
+    if (getPixel(r - 1, c + 1) > threashold)
+    {
+        pixelsExceededPersonThreshold++;
+    }
+    return pixelsExceededPersonThreshold;
 }
 
 void refreshCameraTempsFrame()
@@ -149,12 +192,15 @@ void getRaw(int humanThreshold, float tempKoef)
 
     const float tempThreshold = avgTemp + ((avgTemp - min) * tempKoef);
     int tempAboveThresholdCount = 0;
-    for (int i = 0; i < total_pixels; i++) // same cycle as above
+    for (int r = 0; r < rows; r++)
     {
-        float pixel_temperature = MLX90641To[i];
-        if (tempThreshold < pixel_temperature)
+        for (int c = 0; c < cols; c++) // same cycle as above
         {
-            tempAboveThresholdCount++;
+            float pixel_temperature = getPixel(r, c);
+            if (tempThreshold < pixel_temperature && getNeighboursCount(r, c, tempThreshold) >= minNeighboursCount)
+            {
+                tempAboveThresholdCount++;
+            }
         }
     }
 
@@ -179,7 +225,7 @@ void getRaw(int humanThreshold, float tempKoef)
     doc["max_index"] = max_index;
     doc["overflow"] = false;
     doc["movingAverageEnabled"] = false;
-    doc["person_detected"] = tempAboveThresholdCount >= humanThreshold;
+    doc["person_detected"] = tempAboveThresholdCount >= humanThreshold && max >= minHumanTemp;
 
     // std::string tempCountMapCsv = "";
     // for (auto it = tempCountMap.cbegin(); it != tempCountMap.cend(); it++)
@@ -235,6 +281,30 @@ void updateProperties()
             tempKoef = atof(argValue.c_str());
             Serial.println(tempKoef);
         }
+        else if (argName == "minHumanTemp")
+        {
+            Serial.print("Changing minHumanTemp (");
+            Serial.print(minHumanTemp);
+            Serial.print(") to: ");
+            minHumanTemp = atof(argValue.c_str());
+            Serial.println(minHumanTemp);
+        }
+        else if (argName == "minNeighboursCount")
+        {
+            Serial.print("Changing minNeighboursCount (");
+            Serial.print(minNeighboursCount);
+            Serial.print(") to: ");
+            minNeighboursCount = atof(argValue.c_str());
+            Serial.println(minNeighboursCount);
+        }
+        else if (argName == "delayOutputComputation")
+        {
+            Serial.print("Changing delayOutputComputation (");
+            Serial.print(delayOutputComputation);
+            Serial.print(") to: ");
+            delayOutputComputation = atof(argValue.c_str());
+            Serial.println(delayOutputComputation);
+        }
     }
     argsString += "\n}";
     Serial.println(argsString);
@@ -246,12 +316,6 @@ void updateProperties()
 void sendRaw()
 {
     Serial.println("sendRaw called");
-
-    // updateProperties();
-    refreshCameraTempsFrame();
-
-    Serial.println("started collcting data and sending");
-    getRaw(humanThreshold, tempKoef);
     server.send(200, "application/json", output.c_str());
     Serial.println("sendRaw finished - data sent");
 }
@@ -391,5 +455,18 @@ void loop()
     {
         restart();
     }
+    if (mainLoopCounter > delayOutputComputation)
+    {
+        mainLoopCounter = 0;
+        Serial.println("frame reconstruction started");
+        refreshCameraTempsFrame();
+        Serial.println("frame reconstruction finished -> building output started");
+        getRaw(humanThreshold, tempKoef);
+        Serial.println("building output finished");
+    }
+
     drd->loop();
+    mainLoopCounter++;
+    // Serial.print("Loop counter: ");
+    // Serial.println(mainLoopCounter);
 }
